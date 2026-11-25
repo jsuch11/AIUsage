@@ -1,0 +1,45 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build app bundle
+        # No signing certificate on the runner, so build-app.sh signs ad-hoc.
+        run: ./scripts/build-app.sh
+
+      - name: Verify bundle
+        run: |
+          codesign --verify --strict "build/AI Usage.app"
+          test -x "build/AI Usage.app/Contents/MacOS/AIUsage"
+          test -f "build/AI Usage.app/Contents/Resources/AppIcon.icns"
+
+      - name: Zip app
+        run: ditto -c -k --keepParent "build/AI Usage.app" "build/AI-Usage.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AI-Usage-app
+          path: build/AI-Usage.zip
+          retention-days: 14
