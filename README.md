@@ -41,3 +41,7 @@ The app icon is drawn by `LogoMark` in `Sources/AIUsage/Views/Logo.swift`. After
 - Notifications fire at 80% and 95% used, and when a nearly used-up limit resets.
 
 Tokens are stored in your login Keychain. The account list is in `~/Library/Application Support/AIUsage/`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
