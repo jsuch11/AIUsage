@@ -65,7 +65,7 @@ struct AccountCard: View {
             TimelineView(.periodic(from: .now, by: 30)) { ctx in
                 HStack(spacing: 6) {
                     Image(systemName: "clock.arrow.circlepath").foregroundStyle(.secondary)
-                    Text("Rate-limited by \(account.provider == .claude ? "Claude" : "ChatGPT") — retrying in \(Fmt.countdown(to: until, now: ctx.date))")
+                    Text("Rate-limited by \(account.provider.serviceName) — retrying in \(Fmt.countdown(to: until, now: ctx.date))")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -79,6 +79,12 @@ struct AccountCard: View {
             // The menu shows only the main 5-hour + weekly windows.
             ForEach(compact ? Array(s.windows.prefix(2)) : s.windows) { w in
                 UsageBar(window: w, compact: compact)
+            }
+            if s.session != nil, s.weekly != nil {
+                SessionShareLine(snapshot: s, share: store.sessionShares[account.id], compact: compact)
+            }
+            if let note = s.note {
+                Label(note, systemImage: "clock").font(.caption2).foregroundStyle(.secondary)
             }
         }
     }

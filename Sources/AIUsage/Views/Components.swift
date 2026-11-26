@@ -52,11 +52,22 @@ struct UsageBar: View {
     }
 }
 
+extension Provider {
+    var tint: Color {
+        switch self {
+        case .claude: .orange
+        case .chatgpt: .teal
+        case .antigravity: .blue
+        case .cursor: .purple
+        }
+    }
+}
+
 struct ProviderBadge: View {
     let provider: Provider
     var body: some View {
         Image(systemName: provider.symbol)
-            .foregroundStyle(provider == .claude ? Color.orange : Color.teal)
+            .foregroundStyle(provider.tint)
     }
 }
 
@@ -94,5 +105,50 @@ struct RecommendationView: View {
             Spacer()
             Text(p.reason).font(.caption).foregroundStyle(.secondary)
         }
+    }
+}
+
+/// "A full 5-hour session ≈ 18% of your week" plus what that means for the rest of this week.
+struct SessionShareLine: View {
+    let snapshot: UsageSnapshot
+    let share: SessionShare?
+    var compact = false
+
+    var body: some View {
+        if let session = snapshot.session, let weekly = snapshot.weekly {
+            if let p = share?.percentOfWeek {
+                let rest = session.percentLeft * p / 100
+                let sessionsLeft = weekly.percentLeft / p
+                VStack(alignment: .leading, spacing: 2) {
+                    Label {
+                        Text("A full 5-hour session ≈ **\(Self.num(p))%** of your week")
+                    } icon: { Image(systemName: "chart.pie") }
+                    if !compact {
+                        Text(detail(rest: rest, sessionsLeft: sessionsLeft, weeklyLeft: weekly.percentLeft))
+                            .foregroundStyle(rest > weekly.percentLeft ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                            .padding(.leading, 20)
+                    }
+                }
+                .font(.caption)
+                .help("Learned from how your weekly % rises as you use 5-hour sessions. It's an estimate and gets better with use.")
+            } else if !compact {
+                Label("Learning how much of your week a session uses… \(Int((share?.learning ?? 0) * 100))%",
+                      systemImage: "chart.pie")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .help("Shown once you've used about 20% of a 5-hour session while the app was running.")
+            }
+        }
+    }
+
+    private func detail(rest: Double, sessionsLeft: Double, weeklyLeft: Double) -> String {
+        if rest > weeklyLeft {
+            return "Using the rest of this session (≈\(Self.num(rest))%) would hit your weekly limit (\(Int(weeklyLeft))% left)."
+        }
+        return "Rest of this session ≈ \(Self.num(rest))% · ≈\(Self.num(sessionsLeft, digits: 1)) full sessions left this week"
+    }
+
+    static func num(_ v: Double, digits: Int = 0) -> String {
+        if digits == 0 || v >= 10 { return "\(Int(v.rounded()))" }
+        return String(format: "%.\(digits)f", v)
     }
 }

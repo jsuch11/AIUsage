@@ -1,20 +1,33 @@
 import Foundation
 
 enum Provider: String, Codable, CaseIterable, Identifiable {
-    case claude, chatgpt
+    case claude, chatgpt, antigravity, cursor
     var id: String { rawValue }
     var displayName: String {
         switch self {
         case .claude: "Claude"
         case .chatgpt: "ChatGPT (Codex)"
+        case .antigravity: "Antigravity"
+        case .cursor: "Cursor"
+        }
+    }
+    /// Short name for messages like "Rate-limited by …".
+    var serviceName: String {
+        switch self {
+        case .chatgpt: "ChatGPT"
+        default: displayName
         }
     }
     var symbol: String {
         switch self {
         case .claude: "sparkle"
         case .chatgpt: "bubble.left.and.bubble.right.fill"
+        case .antigravity: "atom"
+        case .cursor: "cursorarrow.rays"
         }
     }
+    /// Antigravity and Cursor read the app's own local sign-in: one account each.
+    var singleAccount: Bool { self == .antigravity || self == .cursor }
 }
 
 struct Account: Codable, Identifiable, Hashable {
@@ -68,11 +81,62 @@ struct UsageSnapshot {
     var plan: String?
     var windows: [UsageWindow]
     var fetchedAt: Date = .now
+    /// Shown under the bars, e.g. when the numbers come from a cache.
+    var note: String?
 
     /// The constraint that limits you right now: the lowest % left across windows.
     var available: Double { windows.map(\.percentLeft).min() ?? 0 }
     var bindingWindow: UsageWindow? { windows.min { $0.percentLeft < $1.percentLeft } }
     var weekly: UsageWindow? { windows.first { $0.id == "seven_day" || $0.id == "secondary" } ?? windows.first(where: \.isWeekly) }
+    /// The short rolling window ("5-hour") that sits inside the weekly one, if the plan has both.
+    var session: UsageWindow? { windows.first { $0.id == "five_hour" || $0.id == "primary" } }
+}
+
+/// How much of the weekly limit one full 5-hour session uses.
+/// Neither service publishes it, so it is learned: each refresh, the rise in weekly % is compared
+/// with the rise in session % over the same stretch. Both readings are whole percents,
+/// so the estimate needs some usage before it is shown.
+struct SessionShare: Codable {
+    var sessionGain = 0.0      // total session % gained across the samples counted
+    var weeklyGain = 0.0       // weekly % gained over the same stretches
+    var last: Sample?
+
+    struct Sample: Codable {
+        var session: Double, weekly: Double
+        var sessionReset: Date?, weeklyReset: Date?
+    }
+
+    static let minimumGain = 20.0
+
+    /// % of the week one full session uses, once there's enough data.
+    var percentOfWeek: Double? {
+        guard sessionGain >= Self.minimumGain, weeklyGain > 0 else { return nil }
+        return weeklyGain / sessionGain * 100
+    }
+    /// Progress towards a first estimate, 0...1.
+    var learning: Double { min(1, sessionGain / Self.minimumGain) }
+
+    mutating func record(session s: UsageWindow, weekly w: UsageWindow) {
+        let now = Sample(session: s.percentUsed, weekly: w.percentUsed, sessionReset: s.resetsAt, weeklyReset: w.resetsAt)
+        defer { last = now }
+        guard let prev = last, !s.hasReset, !w.hasReset,
+              Self.same(prev.weeklyReset, now.weeklyReset, tolerance: 3600) else { return }
+        // Only compare readings from the same session: across a session reset, the old
+        // session's last stretch is unknown.
+        guard Self.same(prev.sessionReset, now.sessionReset, tolerance: 120) else { return }
+        let ds = now.session - prev.session
+        let dw = now.weekly - prev.weekly
+        guard ds > 0, dw >= 0, dw <= ds else { return }   // ignore odd jumps
+        sessionGain += ds
+        weeklyGain += dw
+        // Favour recent behaviour (plans and limits change): keep roughly the last few sessions' worth.
+        if sessionGain > 300 { sessionGain /= 2; weeklyGain /= 2 }
+    }
+
+    private static func same(_ a: Date?, _ b: Date?, tolerance: TimeInterval) -> Bool {
+        guard let a, let b else { return a == nil && b == nil }
+        return abs(a.timeIntervalSince(b)) <= tolerance
+    }
 }
 
 enum AccountState {

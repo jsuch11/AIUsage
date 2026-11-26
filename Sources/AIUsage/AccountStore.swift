@@ -13,7 +13,9 @@ struct Pick: Identifiable {
             return "All limited — back in \(Fmt.countdown(to: r))"
         }
         var parts = ["\(Int(available))% left"]
-        if let w = snapshot.weekly, let r = w.resetsAt { parts.append("week resets in \(Fmt.countdown(to: r))") }
+        if let w = snapshot.weekly, let r = w.resetsAt {
+            parts.append("\(w.label == "Weekly" ? "week" : w.label.lowercased()) resets in \(Fmt.countdown(to: r))")
+        }
         return parts.joined(separator: " · ")
     }
 }
@@ -26,6 +28,10 @@ final class AccountStore: ObservableObject {
     @Published var refreshInterval: Double = UserDefaults.standard.object(forKey: "refreshInterval") as? Double ?? 300 {
         didSet { UserDefaults.standard.set(refreshInterval, forKey: "refreshInterval"); startTimer() }
     }
+
+    /// Learned "one full session = X% of the week", per account.
+    @Published private(set) var sessionShares: [UUID: SessionShare] =
+        (UserDefaults.standard.data(forKey: "sessionShares")).flatMap { try? JSONDecoder().decode([UUID: SessionShare].self, from: $0) } ?? [:]
 
     private var timer: Timer?
     private var lastPercents: [String: Double] = [:]
@@ -62,6 +68,8 @@ final class AccountStore: ObservableObject {
     func remove(_ a: Account) {
         accounts.removeAll { $0.id == a.id }
         states[a.id] = nil
+        sessionShares[a.id] = nil
+        saveShares()
         if a.provider == .claude { Keychain.delete(ClaudeProvider.tokenKey(a.id)) }
         save()
     }
@@ -117,12 +125,15 @@ final class AccountStore: ObservableObject {
             switch a.provider {
             case .claude: s = try await ClaudeProvider.fetch(accountID: a.id)
             case .chatgpt: s = try await CodexProvider.fetch(codexHome: a.codexHome)
+            case .antigravity: s = try await AntigravityProvider.fetch()
+            case .cursor: s = try await CursorProvider.fetch()
             }
             guard accounts.contains(where: { $0.id == a.id }) else { return }
             states[a.id] = .loaded(s)
             rateLimitStrikes[a.id] = nil
             backoffUntil[a.id] = nil
             checkAlerts(a, s)
+            recordShare(a, s)
         } catch UsageError.rateLimited(let retryAfter) {
             // Back off 2, 4, 8… minutes (max 30), or as long as the server asks.
             let strikes = (rateLimitStrikes[a.id] ?? 0) + 1
@@ -135,6 +146,18 @@ final class AccountStore: ObservableObject {
             let ue = error as? UsageError
             states[a.id] = .failed(error.localizedDescription, needsSignIn: ue?.needsSignIn ?? false, last: previous)
         }
+    }
+
+    private func recordShare(_ a: Account, _ s: UsageSnapshot) {
+        guard s.note == nil, let session = s.session, let weekly = s.weekly else { return }
+        var share = sessionShares[a.id] ?? SessionShare()
+        share.record(session: session, weekly: weekly)
+        sessionShares[a.id] = share
+        saveShares()
+    }
+
+    private func saveShares() {
+        if let d = try? JSONEncoder().encode(sessionShares) { UserDefaults.standard.set(d, forKey: "sessionShares") }
     }
 
     // MARK: Derived

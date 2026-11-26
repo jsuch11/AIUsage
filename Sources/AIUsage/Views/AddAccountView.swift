@@ -27,11 +27,29 @@ struct AddAccountView: View {
                     ForEach(Provider.allCases) { Text($0.displayName).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                .onChange(of: provider) { _, p in
+                    if name.isEmpty || Provider.allCases.contains(where: { $0.displayName == name }) {
+                        name = p.singleAccount ? p.displayName : ""
+                    }
+                }
                 TextField("Name (e.g. Claude Personal, Claude Team)", text: $name)
                     .textFieldStyle(.roundedBorder)
             }
 
-            if isClaude { claudeSteps } else { codexSteps }
+            switch reauth?.provider ?? provider {
+            case .claude: claudeSteps
+            case .chatgpt: codexSteps
+            case .antigravity: localAppSteps(
+                "Reads the quota of the Antigravity app on this Mac, using its own sign-in. Nothing to paste.",
+                "Live numbers need Antigravity open. When it's closed, the last quota it saved is shown (quota is only used while it runs).")
+            case .cursor: localAppSteps(
+                "Reads your Cursor plan usage with the Cursor app's sign-in on this Mac. Sign in to Cursor first.",
+                "Shows this billing month's included usage. Uses the same undocumented endpoint as cursor.com's dashboard.")
+            }
+            if reauth == nil, provider.singleAccount, store.accounts.contains(where: { $0.provider == provider }) {
+                Text("\(provider.displayName) is already added. It can only show the account the app is signed in to.")
+                    .font(.caption).foregroundStyle(.orange)
+            }
 
             if let error {
                 Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
@@ -43,11 +61,22 @@ struct AddAccountView: View {
                 if busy { ProgressView().controlSize(.small) }
                 Button(reauth == nil ? "Add" : "Sign in") { Task { await submit() } }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(busy || (isClaude && code.isEmpty) || (reauth == nil && name.isEmpty))
+                    .disabled(busy || (isClaude && code.isEmpty) || (reauth == nil && name.isEmpty) || duplicateSingle)
             }
         }
         .padding(22)
         .frame(width: 460)
+    }
+
+    private var duplicateSingle: Bool {
+        reauth == nil && provider.singleAccount && store.accounts.contains(where: { $0.provider == provider })
+    }
+
+    private func localAppSteps(_ text: String, _ caption: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(text).font(.callout).fixedSize(horizontal: false, vertical: true)
+            Text(caption).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var claudeSteps: some View {
@@ -94,8 +123,19 @@ struct AddAccountView: View {
                     store.add(a)
                 }
             } else {
-                _ = try await CodexProvider.fetch(codexHome: codexHome)   // validate before adding
-                store.add(Account(name: name, provider: .chatgpt, codexHome: codexHome))
+                // Validate before adding.
+                switch provider {
+                case .chatgpt:
+                    _ = try await CodexProvider.fetch(codexHome: codexHome)
+                    store.add(Account(name: name, provider: .chatgpt, codexHome: codexHome))
+                case .antigravity:
+                    _ = try await AntigravityProvider.fetch()
+                    store.add(Account(name: name, provider: .antigravity))
+                case .cursor:
+                    _ = try await CursorProvider.fetch()
+                    store.add(Account(name: name, provider: .cursor))
+                case .claude: break
+                }
             }
             dismiss()
         } catch {
