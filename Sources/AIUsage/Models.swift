@@ -1,7 +1,7 @@
 import Foundation
 
 enum Provider: String, Codable, CaseIterable, Identifiable {
-    case claude, chatgpt, antigravity, cursor
+    case claude, chatgpt, antigravity, cursor, perplexity
     var id: String { rawValue }
     var displayName: String {
         switch self {
@@ -9,6 +9,7 @@ enum Provider: String, Codable, CaseIterable, Identifiable {
         case .chatgpt: "ChatGPT (Codex)"
         case .antigravity: "Antigravity"
         case .cursor: "Cursor"
+        case .perplexity: "Perplexity"
         }
     }
     /// Short name for messages like "Rate-limited by …".
@@ -24,10 +25,13 @@ enum Provider: String, Codable, CaseIterable, Identifiable {
         case .chatgpt: "bubble.left.and.bubble.right.fill"
         case .antigravity: "atom"
         case .cursor: "cursorarrow.rays"
+        case .perplexity: "magnifyingglass"
         }
     }
     /// Antigravity and Cursor read the app's own local sign-in: one account each.
     var singleAccount: Bool { self == .antigravity || self == .cursor }
+    /// Signed in with something pasted into this app (so it can be signed in again from the card).
+    var ownSignIn: Bool { self == .claude || self == .perplexity }
 }
 
 struct Account: Codable, Identifiable, Hashable {
@@ -43,8 +47,10 @@ struct UsageWindow: Identifiable, Hashable {
     var id: String
     var label: String
     var percentUsed: Double          // 0...100
-    var resetsAt: Date?
-    var length: TimeInterval?
+    var resetsAt: Date? = nil
+    var length: TimeInterval? = nil
+    /// Replaces "% left" when the service gives counts, e.g. "179 left".
+    var detail: String? = nil
 
     /// Once the reset time has passed the old reading is stale: the window has started over.
     var hasReset: Bool { resetsAt.map { $0 <= .now } ?? false }
@@ -144,12 +150,15 @@ enum AccountState {
     case loaded(UsageSnapshot)
     case failed(String, needsSignIn: Bool, last: UsageSnapshot?)
     case rateLimited(until: Date, last: UsageSnapshot?)
+    /// Couldn't reach the service (slow or no network). Last numbers stay on screen.
+    case offline(String, last: UsageSnapshot?)
 
     var snapshot: UsageSnapshot? {
         switch self {
         case .loaded(let s): s
         case .failed(_, _, let s): s
         case .rateLimited(_, let s): s
+        case .offline(_, let s): s
         case .loading: nil
         }
     }
@@ -161,6 +170,7 @@ enum UsageError: LocalizedError {
     case http(Int, String)
     case rateLimited(retryAfter: TimeInterval?)
     case badResponse(String)
+    case network(URLError, host: String?)
 
     var errorDescription: String? {
         switch self {
@@ -169,6 +179,12 @@ enum UsageError: LocalizedError {
         case .http(let c, let body): "HTTP \(c): \(body.prefix(160))"
         case .rateLimited: "Rate-limited by the server."
         case .badResponse(let m): "Unexpected response: \(m)"
+        case .network(let e, let host):
+            switch e.code {
+            case .notConnectedToInternet: "No internet connection. Retrying soon."
+            case .timedOut: "\(host ?? "The server") didn't answer in time (slow network). Retrying soon."
+            default: "Couldn't reach \(host ?? "the server"): \(e.localizedDescription) Retrying soon."
+            }
         }
     }
     var needsSignIn: Bool {
@@ -177,6 +193,7 @@ enum UsageError: LocalizedError {
         default: false
         }
     }
+    var isNetwork: Bool { if case .network = self { true } else { false } }
 }
 
 enum Fmt {

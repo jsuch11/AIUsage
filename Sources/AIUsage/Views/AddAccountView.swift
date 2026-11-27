@@ -13,10 +13,12 @@ struct AddAccountView: View {
     @State private var pkce = ClaudeAuth.makePKCE()
     @State private var code = ""
     @State private var codexHome = "~/.codex"
+    @State private var cookie = ""
     @State private var busy = false
     @State private var error: String?
 
-    private var isClaude: Bool { (reauth?.provider ?? provider) == .claude }
+    private var current: Provider { reauth?.provider ?? provider }
+    private var isClaude: Bool { current == .claude }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -36,7 +38,7 @@ struct AddAccountView: View {
                     .textFieldStyle(.roundedBorder)
             }
 
-            switch reauth?.provider ?? provider {
+            switch current {
             case .claude: claudeSteps
             case .chatgpt: codexSteps
             case .antigravity: localAppSteps(
@@ -45,6 +47,7 @@ struct AddAccountView: View {
             case .cursor: localAppSteps(
                 "Reads your Cursor plan usage with the Cursor app's sign-in on this Mac. Sign in to Cursor first.",
                 "Shows this billing month's included usage. Uses the same undocumented endpoint as cursor.com's dashboard.")
+            case .perplexity: perplexitySteps
             }
             if reauth == nil, provider.singleAccount, store.accounts.contains(where: { $0.provider == provider }) {
                 Text("\(provider.displayName) is already added. It can only show the account the app is signed in to.")
@@ -61,11 +64,11 @@ struct AddAccountView: View {
                 if busy { ProgressView().controlSize(.small) }
                 Button(reauth == nil ? "Add" : "Sign in") { Task { await submit() } }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(busy || (isClaude && code.isEmpty) || (reauth == nil && name.isEmpty) || duplicateSingle)
+                    .disabled(busy || (isClaude && code.isEmpty) || (current == .perplexity && cookie.isEmpty) || (reauth == nil && name.isEmpty) || duplicateSingle)
             }
         }
         .padding(22)
-        .frame(width: 460)
+        .frame(width: 540)
     }
 
     private var duplicateSingle: Bool {
@@ -95,6 +98,24 @@ struct AddAccountView: View {
         }
     }
 
+    private var perplexitySteps: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Perplexity has no sign-in for apps, so this uses your browser's Perplexity session:")
+                .font(.callout).fixedSize(horizontal: false, vertical: true)
+            Text("""
+                1. Open perplexity.ai in Chrome, Edge or Safari and sign in.
+                2. Open the developer tools (⌥⌘I; in Safari turn on Settings → Advanced → Show features for web developers first).
+                3. Chrome/Edge: Application → Cookies. Safari: Storage → Cookies. Pick https://www.perplexity.ai.
+                4. Copy the value of **\(PerplexityProvider.cookieName)** and paste it here.
+                """)
+                .font(.callout).fixedSize(horizontal: false, vertical: true)
+            Button("Open perplexity.ai") { NSWorkspace.shared.open(URL(string: "https://www.perplexity.ai")!) }
+            SecureField("Paste the cookie value", text: $cookie).textFieldStyle(.roundedBorder)
+            Text("Stored in your Keychain and only sent to perplexity.ai. Treat it like a password: it signs in to your account. Signing out of Perplexity in that browser ends it; then sign in again here.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private var codexSteps: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Uses the ChatGPT login of the Codex CLI. If you haven't yet, run this in Terminal and sign in with your ChatGPT account:")
@@ -112,7 +133,13 @@ struct AddAccountView: View {
         error = nil
         defer { busy = false }
         do {
-            if isClaude {
+            if current == .perplexity {
+                let token = PerplexityProvider.cleanToken(cookie)
+                let a = reauth ?? Account(name: name, provider: .perplexity)
+                _ = try await PerplexityProvider.fetch(token: token, accountID: a.id)
+                PerplexityProvider.saveToken(token, for: a.id)
+                if reauth != nil { await store.refresh(a) } else { store.add(a) }
+            } else if isClaude {
                 let tokens = try await ClaudeAuth.exchange(pasted: code, pkce: pkce)
                 if let a = reauth {
                     ClaudeProvider.saveTokens(tokens, for: a.id)
@@ -134,7 +161,7 @@ struct AddAccountView: View {
                 case .cursor:
                     _ = try await CursorProvider.fetch()
                     store.add(Account(name: name, provider: .cursor))
-                case .claude: break
+                case .claude, .perplexity: break
                 }
             }
             dismiss()

@@ -10,8 +10,11 @@ limit is left, when it resets, and which account to use right now.
 - **Antigravity**: per-model quota (models that share a pool are shown once), read from the Antigravity app's
   local language server while it runs. When it's closed, the last quota Antigravity IDE saved is shown.
 - **Cursor**: this billing month's included usage, using the Cursor app's sign-in on this Mac.
+- **Perplexity**: Pro Search, Research, Labs and Deep Research queries left. Perplexity has no app sign-in,
+  so you paste your browser's `__Secure-next-auth.session-token` cookie (kept in the Keychain). It only reports
+  what's left, so each total is the highest count seen, and there's no refill time.
 
-All of these use undocumented endpoints (the ones Claude Code, the Codex CLI, Antigravity and cursor.com use).
+All of these use undocumented endpoints (the ones Claude Code, the Codex CLI, Antigravity, cursor.com and perplexity.ai use).
 They may change without notice.
 
 ## Build
@@ -38,6 +41,7 @@ The app icon is drawn by `LogoMark` in `Sources/AIUsage/Views/Logo.swift`. After
   (Claude and ChatGPT). It appears after you've used about 20% of a session with the app running,
   and also says how much the rest of the current session would cost and how many full sessions the week has left.
 - Weekly bars have a tick for even pace. Left of the tick means you're using it faster than the week allows.
+- On a slow or dropped connection the last numbers stay on screen and the app retries after a minute.
 - Notifications fire at 80% and 95% used, and when a nearly used-up limit resets.
 
 Tokens are stored in your login Keychain. The account list is in `~/Library/Application Support/AIUsage/`.

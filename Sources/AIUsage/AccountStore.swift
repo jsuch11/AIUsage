@@ -71,6 +71,7 @@ final class AccountStore: ObservableObject {
         sessionShares[a.id] = nil
         saveShares()
         if a.provider == .claude { Keychain.delete(ClaudeProvider.tokenKey(a.id)) }
+        if a.provider == .perplexity { PerplexityProvider.forget(a.id) }
         save()
     }
 
@@ -127,9 +128,12 @@ final class AccountStore: ObservableObject {
             case .chatgpt: s = try await CodexProvider.fetch(codexHome: a.codexHome)
             case .antigravity: s = try await AntigravityProvider.fetch()
             case .cursor: s = try await CursorProvider.fetch()
+            case .perplexity: s = try await PerplexityProvider.fetch(accountID: a.id)
             }
             guard accounts.contains(where: { $0.id == a.id }) else { return }
             states[a.id] = .loaded(s)
+            retryTasks[a.id]?.cancel()
+            retryTasks[a.id] = nil
             rateLimitStrikes[a.id] = nil
             backoffUntil[a.id] = nil
             checkAlerts(a, s)
@@ -142,9 +146,27 @@ final class AccountStore: ObservableObject {
             let until = Date().addingTimeInterval(wait)
             backoffUntil[a.id] = until
             states[a.id] = .rateLimited(until: until, last: previous)
+        } catch let e as UsageError where e.isNetwork {
+            // The request never reached the server, so it doesn't count towards Claude's spacing.
+            lastAttempt[a.id] = nil
+            states[a.id] = .offline(e.localizedDescription, last: previous)
+            scheduleRetry(a)
         } catch {
             let ue = error as? UsageError
             states[a.id] = .failed(error.localizedDescription, needsSignIn: ue?.needsSignIn ?? false, last: previous)
+        }
+    }
+
+    private var retryTasks: [UUID: Task<Void, Never>] = [:]
+
+    /// After a network failure, try again in a minute instead of waiting for the next refresh.
+    private func scheduleRetry(_ a: Account) {
+        retryTasks[a.id]?.cancel()
+        retryTasks[a.id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            guard !Task.isCancelled, let self, self.accounts.contains(where: { $0.id == a.id }) else { return }
+            self.retryTasks[a.id] = nil
+            await self.refresh(a)
         }
     }
 

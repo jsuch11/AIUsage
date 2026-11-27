@@ -22,7 +22,7 @@ struct AccountCard: View {
         .contextMenu {
             Button("Refresh") { Task { await store.refresh(account) } }
             Button("Rename…") { newName = account.name; renaming = true }
-            if account.provider == .claude { Button("Sign in again…") { onSignIn(account) } }
+            if account.provider.ownSignIn { Button("Sign in again…") { onSignIn(account) } }
             Divider()
             Button("Remove", role: .destructive) { store.remove(account) }
         }
@@ -56,9 +56,19 @@ struct AccountCard: View {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
                 Text(msg).font(.caption).foregroundStyle(.secondary).lineLimit(3)
                 Spacer()
-                if needsSignIn && account.provider == .claude {
+                if needsSignIn && account.provider.ownSignIn {
                     Button("Sign in") { onSignIn(account) }.controlSize(.small)
                 }
+            }
+        case .offline(let msg, let last):
+            if let last { windows(last).opacity(0.8) }
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "wifi.exclamationmark").foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(msg).lineLimit(3)
+                    if let last { Text("Showing numbers from \(last.fetchedAt.formatted(.relative(presentation: .named)))") }
+                }
+                .font(.caption).foregroundStyle(.secondary)
             }
         case .rateLimited(let until, let last):
             if let last { windows(last).opacity(0.7) }

@@ -15,7 +15,7 @@ struct UsageBar: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text(window.label).font(compact ? .caption : .callout).foregroundStyle(.secondary)
                     Spacer()
-                    Text("\(Int(window.percentLeft))% left")
+                    Text(window.detail ?? "\(Int(window.percentLeft))% left")
                         .font((compact ? Font.caption : .callout).monospacedDigit().weight(.semibold))
                         .foregroundStyle(usageColor(window.percentLeft))
                 }
@@ -59,6 +59,7 @@ extension Provider {
         case .chatgpt: .teal
         case .antigravity: .blue
         case .cursor: .purple
+        case .perplexity: .cyan
         }
     }
 }
